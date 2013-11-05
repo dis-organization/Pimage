@@ -40,8 +40,7 @@ Pimage.POSIXt <- function(x, grid = NULL, bin = c("primary", "intermediate"), ..
 ##    attr(pim, "Z") <- Z
 ##    attr(pim, "itersbin") <- 0
 ##    attr(pim, "projection") <- projection(grid)
-    class(pim) <- c("Pimage")
-    pim
+     pim
 }
 
 .pimg <- function (tbnd) {
@@ -54,15 +53,215 @@ Pimage.POSIXt <- function(x, grid = NULL, bin = c("primary", "intermediate"), ..
     durations <- rep(0, n)
     ## raw list of internal pimg objects
     p0 <- vector("list", n)
-    for (i in seq_along(p0)) p0[[i]] <- .pimg(c(x[i], durations[i]))
-    list(p = p0,
+    for (i in seq_along(p0)) p0[[i]] <- .pimg(c(unclass(x[i]), durations[i]))
+    structure(list(p = p0,
          xbound = xbound,
          ybound = ybound,
-         tbound = range(x), ...)
+         tbound = range(x), ...),
+              class = "Pimage")
 }
 
- Pimage(Sys.time())
+"[[.Pimage" <- function(x, i, j, ..., drop = FALSE) {
+    cl <- oldClass(x)
+    class(x) <- NULL
+    ## note this has to be the 1-element list, perhaps other i-s should be an error
+    x[["p"]] <- x[["p"]][i[1L]]
+    class(x) <- cl
+    x
+}
 
+"[[<-.Pimage" <- function(x, ..., value) {
+    ## need further checks that these are equivalent Pimage objects
+    if (inherits(value, "Pimage") & length(value) == 1L) {
+        x$p[[i]] <- value$p[[1L]]
+    } else {
+        stop(sprintf("no method to [[.<- for objects of class %s", class(x)))
+    }
+    x
+}
+
+
+
+##' @importFrom MASS kde2d bandwidth.nrd
+chain.bin <-
+  function(pimg, xy, weight = NULL, type = c("bin", "kde"), hscale = 0.7, previters = 0) {
+
+    type <- match.arg(type)
+    xbnd <- pimg$xbound
+    ybnd <- pimg$ybound
+    tbnd <- pimg$tbound
+
+    ## Bin the locations into the global image coords
+    i <- ceiling(xbnd[3]*(xy[,1]-xbnd[1])/(xbnd[2]-xbnd[1]))
+    j <- ceiling(ybnd[3]*(xy[,2]-ybnd[1])/(ybnd[2]-ybnd[1]))
+    ## Delete those points outside the global image
+    keep <- (i >= 1 & i <= xbnd[3] & j >= 1 & j <= ybnd[3])
+
+
+    if(any(keep)) {
+      i <- i[keep]
+      j <- j[keep]
+
+      ## Expand image to new size
+      if(is.null(pimg$image)) {
+        irange <- range(i)
+        jrange <- range(j)
+        off <- c(irange[1],jrange[1])
+        img <- matrix(0,diff(irange)+1,diff(jrange)+1)
+      } else {
+        irange0 <- pimg$offset[1]+c(0,nrow(pimg$image)-1)
+        jrange0 <- pimg$offset[2]+c(0,ncol(pimg$image)-1)
+        irange <- range(i,irange0)
+        jrange <- range(j,jrange0)
+        off <- c(irange[1],jrange[1])
+        if(all(irange==irange0) && all(jrange==jrange0)) {
+          ## Keep original image
+          img <- pimg$image
+        } else {
+          ## Expand image
+          img <- matrix(0,diff(irange)+1,diff(jrange)+1)
+          img[(irange0[1]-off[1]+1):(irange0[2]-off[1]+1),
+              (jrange0[1]-off[2]+1):(jrange0[2]-off[2]+1)] <- pimg$image
+        }
+        if (!is.null(weight) & previters > 0) img <- (img / sum(img)) * previters
+      }
+
+      ## Add binned points to new image
+      ##img <- img + weight * tabulate(nrow(img) * (j - off[2]) + i + (1 - off[1]), nbins = prod(dim(img)))
+      ## save the original scaling
+      img1 <- img + tabulate(nrow(img) * (j - off[2]) + i + (1 - off[1]), nbins = prod(dim(img)))
+      if (!is.null(weight)) img1 <- (img1 / sum(img1)) * weight
+
+      pimg$p[[1L]]$image <- img1
+      pimg$p[[1L]]$offset <- off
+
+      ##if (type == "kde") {
+      ##    x <- as.local.pimg(pimg)
+      ##    kde <- kde2d(xy[,1], xy[,2], h = pmax(1, c(bandwidth.nrd(xy[,1]), bandwidth.nrd(xy[,2]))) * hscale,
+      ##                 n = c(length(x$x), length(x$y)), lims = c(range(x$x), range(x$y)))
+      ##    pimg$image <- kde$z
+      ##}
+      ##class(pimg) <- c("pimg", "list")
+    }
+    pimg
+  }
+
+length.Pimage <- function(x, ...) {
+    length(x$p)
+}
+##' Extract parts of Pimage
+##'
+##' Extraction can be done in the usual ways by numeric or integer
+##' indexes, the result is returned as a
+##' \code{\link[raster]{raster}}.
+##' @name [
+##' @param x Pimage object
+##' @param i numeric or logical vector
+##' @param j ignored
+##' @param drop ignored
+##' @aliases [.Pimage
+##' @docType methods
+##' @rdname Pimage-methods
+##' @return RasterLayer
+##' @method [ Pimage
+##' @S3method [ Pimage
+##' @seealso \code{\link{cut.Pimage}} for creating temporal partitions.
+##' @export
+"[.Pimage" <- function(x, i, j, drop = TRUE, ...) {
+  timeobject <- .times(x)
+
+  ## watch out for out of bounds i
+  ## i.e. i > length(x) is not checked yet
+  n <- length(x)
+  if(nargs() == 1) n2 <-  n
+  if (missing(i)) i <- seq_len(n)
+
+  if (all(class(i) == "logical")) {
+    n2 <- sum(i)
+    i <- which(i)
+  }
+
+
+  if (all(class(i) == "character")) {
+      i <- grep(i, names(x))
+  }
+
+  ##oldx <- x
+  x$p <- x$p[i]
+
+  val <- as.image.Pimage(x)
+ ## val$z[!val$z > 0] <- NA
+ ## raster(val, crs = .projection(x))
+  val
+}
+.times <- function(x) {
+    .POSIXct(sapply(x$p, function(x) x$tbound[1L]))
+}
+.projection <- function(x) {
+    x$projection
+}
+
+## these are old workers, but they work on new Pimage
+  `as.matrix.pimg` <-
+      function(x) {
+
+        pimg <- x
+        img <- matrix(0,pimg$xbound[3],pimg$ybound[3])
+        ##if(!is.null(pimg$image)) {
+        ##  off <- pimg$offset
+        ##  img[off[1]:(off[1]+nrow(pimg$image)-1),
+         ##     off[2]:(off[2]+ncol(pimg$image)-1)] <- pimg$image
+        ##}
+        img
+      }
+
+
+    `as.image.pimg` <-
+      function(pimg) {
+        img <- coords.pimg(pimg)
+        img$z <- as.matrix.pimg(pimg)
+        img
+      }
+    `coords.pimg` <-
+      function(pimg) {
+        list(x=seq(pimg$xbound[1],pimg$xbound[2],length=pimg$xbound[3]),
+             y=seq(pimg$ybound[1],pimg$ybound[2],length=pimg$ybound[3]))
+      }
+
+
+as.image.Pimage <-
+  function (pimgs)
+  {
+    ## should have checks elsewhere for these NULLs, do they persist when no mixing?
+    ## bad <- unlist(lapply(pimgs, function(x) is.null(x$image)))
+
+    res <- as.image.pimg(pimgs[[1]])
+
+    ## no longer needed
+    ##if (length(pimgs) == 1L)
+    ##  return(res)
+    if (all(sapply(pimgs$p, function(x) is.null(x$image)))) return(res)
+    for (i in seq_len(length(pimgs))) {
+
+        ## bit weird, but we need p[[1L]]
+        img <- pimgs$p[[i]]
+        if (is.null(img$image)) next;
+      Xpos <- img$offset[1]
+      Ypos <- img$offset[2]
+
+      Xind <- Xpos:(Xpos + dim(img$image)[1] - 1)
+      Yind <- Ypos:(Ypos + dim(img$image)[2] - 1)
+      res$z[Xind, Yind] <- res$z[Xind, Yind] + img$image
+    }
+    res
+  }
+
+x <- Pimage(Sys.time() + 1:3)
+x[[3]]
+x[[2]] <- "rabbit"
+
+xy <- cbind(rnorm(1000, 0, 1), rnorm(1000, 10, 1.5))
+for (i in seq_len(length(x))) x[[i]] <- chain.bin(x[[i]], xy)
 
 
 ##.checkforsense <- function(x) {
@@ -260,119 +459,6 @@ pimg <- function (xmin, xmax, ymin, ymax, xydim, tmin, tdur) {
 ##                ymin(x) + res[2L]/2L, ymax(x) - res[2L]/2L, dims[2L:1L])
 ##}
 
-##' @importFrom MASS kde2d bandwidth.nrd
-chain.bin <-
-  function(pimg, xy, weight = NULL, type = c("bin", "kde"), hscale = 0.7, previters = 0) {
-
-    type <- match.arg(type)
-    xbnd <- pimg$xbound
-    ybnd <- pimg$ybound
-    tbnd <- pimg$tbound
-
-    ## Bin the locations into the global image coords
-    i <- ceiling(xbnd[3]*(xy[,1]-xbnd[1])/(xbnd[2]-xbnd[1]))
-    j <- ceiling(ybnd[3]*(xy[,2]-ybnd[1])/(ybnd[2]-ybnd[1]))
-    ## Delete those points outside the global image
-    keep <- (i >= 1 & i <= xbnd[3] & j >= 1 & j <= ybnd[3])
-
-
-    if(any(keep)) {
-      i <- i[keep]
-      j <- j[keep]
-
-      ## Expand image to new size
-      if(is.null(pimg$image)) {
-        irange <- range(i)
-        jrange <- range(j)
-        off <- c(irange[1],jrange[1])
-        img <- matrix(0,diff(irange)+1,diff(jrange)+1)
-      } else {
-        irange0 <- pimg$offset[1]+c(0,nrow(pimg$image)-1)
-        jrange0 <- pimg$offset[2]+c(0,ncol(pimg$image)-1)
-        irange <- range(i,irange0)
-        jrange <- range(j,jrange0)
-        off <- c(irange[1],jrange[1])
-        if(all(irange==irange0) && all(jrange==jrange0)) {
-          ## Keep original image
-          img <- pimg$image
-        } else {
-          ## Expand image
-          img <- matrix(0,diff(irange)+1,diff(jrange)+1)
-          img[(irange0[1]-off[1]+1):(irange0[2]-off[1]+1),
-              (jrange0[1]-off[2]+1):(jrange0[2]-off[2]+1)] <- pimg$image
-        }
-        if (!is.null(weight) & previters > 0) img <- (img / sum(img)) * previters
-      }
-
-      ## Add binned points to new image
-      ##img <- img + weight * tabulate(nrow(img) * (j - off[2]) + i + (1 - off[1]), nbins = prod(dim(img)))
-      ## save the original scaling
-      img1 <- img + tabulate(nrow(img) * (j - off[2]) + i + (1 - off[1]), nbins = prod(dim(img)))
-      if (!is.null(weight)) img1 <- (img1 / sum(img1)) * weight
-
-      pimg <- list(xbound=xbnd,
-                   ybound=ybnd,
-                   offset=off,
-                   image=img1,
-                   tbound = tbnd)
-
-      if (type == "kde") {
-          x <- as.local.pimg(pimg)
-          kde <- kde2d(xy[,1], xy[,2], h = pmax(1, c(bandwidth.nrd(xy[,1]), bandwidth.nrd(xy[,2]))) * hscale,
-                       n = c(length(x$x), length(x$y)), lims = c(range(x$x), range(x$y)))
-          pimg$image <- kde$z
-      }
-      class(pimg) <- c("pimg", "list")
-    }
-    pimg
-  }
-
-
-##' Extract parts of Pimage
-##'
-##' Extraction can be done in the usual ways by numeric or integer
-##' indexes, the result is returned as a
-##' \code{\link[raster]{raster}}.
-##' @name [
-##' @param x Pimage object
-##' @param i numeric or logical vector
-##' @param j ignored
-##' @param drop ignored
-##' @aliases [.Pimage
-##' @docType methods
-##' @rdname Pimage-methods
-##' @return RasterLayer
-##' @method [ Pimage
-##' @S3method [ Pimage
-##' @seealso \code{\link{cut.Pimage}} for creating temporal partitions.
-##' @export
-"[.Pimage" <- function(x, i, j, drop = TRUE, ...) {
-  timeobject <- .times(x)
-
-  n <- length(x)
-  if(nargs() == 1) n2 <-  n
-  if (missing(i)) i <- seq_len(n)
-
-  if (all(class(i) == "logical")) {
-    n2 <- sum(i)
-    i <- which(i)
-  }
-
-
-  if (all(class(i) == "character")) {
-      i <- grep(i, names(x))
-  }
-  class(x) <- NULL
-  val <- NextMethod("[")
-  ##browser()
-  class(val) <- "Pimage"
-
-
-  val <- as.image.Pimage(val)
-  val$z[!val$z > 0] <- NA
-  raster(val, crs = .projection(x))
-
-}
 
 .projection <- function(x) {
     attr(x, "projection")
@@ -479,52 +565,7 @@ as.local.pimg <- function (pimg)
 }
 
 
-  `as.matrix.pimg` <-
-      function(x) {
 
-        pimg <- x
-        img <- matrix(0,pimg$xbound[3],pimg$ybound[3])
-        if(!is.null(pimg$image)) {
-          off <- pimg$offset
-          img[off[1]:(off[1]+nrow(pimg$image)-1),
-              off[2]:(off[2]+ncol(pimg$image)-1)] <- pimg$image
-        }
-        img
-      }
-
-    `as.image.pimg` <-
-      function(pimg) {
-        img <- coords.pimg(pimg)
-        img$z <- as.matrix.pimg(pimg)
-        img
-      }
-    `coords.pimg` <-
-      function(pimg) {
-        list(x=seq(pimg$xbound[1],pimg$xbound[2],length=pimg$xbound[3]),
-             y=seq(pimg$ybound[1],pimg$ybound[2],length=pimg$ybound[3]))
-      }
-
-
-as.image.Pimage <-
-  function (pimgs)
-  {
-    ## should have checks elsewhere for these NULLs, do they persist when no mixing?
-    ## bad <- unlist(lapply(pimgs, function(x) is.null(x$image)))
-
-    res <- as.image.pimg(pimgs[[1]])
-    if (length(pimgs) == 1)
-      return(res)
-    if (all(sapply(pimgs, function(x) is.null(x$image)))) return(res)
-    for (i in seq_along(pimgs)[-1]) {
-      img <- pimgs[[i]]
-      Xpos <- img$offset[1]
-      Ypos <- img$offset[2]
-      Xind <- Xpos:(Xpos + dim(img$image)[1] - 1)
-      Yind <- Ypos:(Ypos + dim(img$image)[2] - 1)
-      res$z[Xind, Yind] <- res$z[Xind, Yind] + img$image
-    }
-    res
-  }
 
 .isZ <- function(x) {
     x[[1L]]$tbound[2] > 0
