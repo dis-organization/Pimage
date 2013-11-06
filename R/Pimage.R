@@ -380,6 +380,8 @@ length.Pimage <- function(x, ...) {
 .durations <- function(x) {
     sapply(x$p, function(x) diff(x$tbound))
 }
+
+
 .projection <- function(x) {
     x$projection
 }
@@ -554,16 +556,23 @@ print.Pimage <- function(x, ...) {
 c.Pimage <- function(..., recursive = FALSE) {
     obj <- list(...)
 
-    x <- do.call("c", lapply(obj, as.list))
     projections <- sapply(obj, attr, "projection")
     if (!length(unique(projections)) == 1L) stop("inputs have non-matching projections")
-    Zs <- sapply(obj, attr, "Z")
-    if (!length(unique(Zs)) == 1L) stop("inputs have non-matching bin types")
 
-    class(x) <- "Pimage"
-##    .times(x) <- sapply(obj, attr, "times")
-    attr(x, "projection") <- unique(projections)
-    x
+    x0 <- sapply(obj$p, function(x) x$xbound[1L])
+    x1 <- sapply(obj$p, function(x) x$xbound[2L])
+    nx <- sapply(obj$p, function(x) x$xbound[3L])
+    y0 <- sapply(obj$p, function(x) x$ybound[1L])
+    y1 <- sapply(obj$p, function(x) x$ybound[2L])
+    ny <- sapply(obj$p, function(x) x$ybound[3L])
+
+    unq <- function(x) length(x) == length(unique(x))
+    if (!(all(c(unq(x0), unq(x1), unq(nx), unq(y0), unq(y1), unq(ny))))) stop("inputs have different grid bounds")
+    x <- do.call("c", lapply(obj, as.list))
+
+    p <- obj[[1L]][[1L]]
+    p$p <- x
+    p
 }
 
 ##' @rdname Pimage-methods
@@ -572,23 +581,9 @@ c.Pimage <- function(..., recursive = FALSE) {
 ##' @export
 as.list.Pimage <- function(x, ...) {
     ## drop the class and attributes
-    class(x) <- "list"
-    attr(x, "times") <- NULL
-    attr(x, "Z") <- NULL
-    attr(x, "projection") <- NULL
-    x
-
+    x$p
 }
 
-
-
-.isZ <- function(x) {
-    x[[1L]]$tbound[2] > 0
-}
-
-.times <- function(x) {
-    .POSIXct(sapply(x, function(x) x[["tbound"]][1L]))
-}
 
 ## not required
 ##".times<-" <- function(x, value) {
