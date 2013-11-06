@@ -6,11 +6,12 @@ This aims to be
  - 
 TODO
 
+- finish handling of Z duration versus X time points
 
-- implement model.bin as Pimage.default (don't know what class)
 
 
 DONE
+- implement model.bin as Pimage.default (don't know what class)
 - implement chain.bin with new Pimage structure, it will take the
 subsetted Pimage object, a matrix xy
  - overwrite [[ method to get the whole object with the ith pimg, and
