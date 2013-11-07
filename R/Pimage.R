@@ -175,17 +175,14 @@ Pimage.default <- function(x, type = c("primary", "intermediate"),
            chain[,2,] <- p[,2]
     }
 
-
-    times <- .times(pimg)
-
     check <- dim(chain)[1] == length(pimg)
     if (!check) stop(sprintf("dimensions of chain, nrow = %i do not match the length of Pimage, length = %i", dim(chain)[1], length(pimg)))
-    if (type = "intermediate") {
-        weights <- diff(times)
-        units(weights) <- "hours"  ## could allow user control here
-        weights <- as.numeric(weights)  ## R controls the units, and now we drop the class
+    if (type == "intermediate") {
+        weights <- .durations(pimg)
+##        units(weights) <- "hours"  ## could allow user control here
+  ##      weights <- as.numeric(weights)  ## R controls the units, and now we drop the class
     } else {
-        weights <- NULL  ##rep(1L, length(times))
+        weights <- NULL
     }
 
   for (k in seq_along(pimg)) {
@@ -321,7 +318,7 @@ length.Pimage <- function(x, ...) {
 ##' @seealso \code{\link{cut.Pimage}} for creating temporal partitions.
 ##' @export
 "[.Pimage" <- function(x, i, j, drop = TRUE, ...) {
-  timeobject <- .times(x)
+  timeobject <- .Xtimes(x)
 
   ## watch out for out of bounds i
   ## i.e. i > length(x) is not checked yet
@@ -335,8 +332,11 @@ length.Pimage <- function(x, ...) {
   }
 
 
+  ## this actually messes with x$projection
   if (all(class(i) == "character")) {
-      i <- grep(i, names(x))
+      class(x) <- NULL
+      return(x[i])
+  ##    i <- grep(i, names(x))
   }
 
   ##oldx <- x
@@ -349,12 +349,15 @@ length.Pimage <- function(x, ...) {
 }
 
 
-
 "[[.Pimage" <- function(x, i, j, ..., drop = FALSE) {
     cl <- oldClass(x)
     class(x) <- NULL
     ## note this has to be the 1-element list, perhaps other i-s should be an error
-    x[["p"]] <- x[["p"]][i[1L]]
+    if (!is.character(i)) {
+        x[["p"]] <- x[["p"]][i[1L]]
+    } else {
+        return(x[[i]])
+    }
     class(x) <- cl
     x
 }
@@ -370,16 +373,27 @@ length.Pimage <- function(x, ...) {
 }
 
 
+.type <- function(x) {
+    c("primary", "intermediate")[all(is.na(sapply(x$p, function(x) x$tbound[2L]))) + 1]
+}
+
 .Xtimes <- function(x) {
     .POSIXct(sapply(x$p, function(x) x$tbound[1L]))
 }
 
 .Ztimes <- function(x) {
-       .POSIXct(sapply(x$p, function(x) median(x$tbound)))
+       .POSIXct(sapply(x$p, function(x) {xt <- x$tbound; xt[1L] + diff(xt)/2}))
 }
 .durations <- function(x) {
     sapply(x$p, function(x) diff(x$tbound))
 }
+
+as.POSIXct.Pimage <- function(x, ...) {
+    switch(.type(x),
+           primary = .Xtimes(x),
+           intermediate = .Ztimes(x))
+}
+
 
 
 .projection <- function(x) {
@@ -434,33 +448,6 @@ as.image.Pimage <-
     res
 }
 
-library(raster)
-x <- Pimage(Sys.time() + 1:3)
-x[[3]]
-##x[[2]] <- "rabbit"
-
-xy <- cbind(rnorm(1000, 0, 1), rnorm(1000, 10, 1.5))
-
-## this is the internal mechanism for Pimage.default
-for (i in seq_len(length(x))) x[[i]] <- chain.bin(x[[i]], xy - 10 + i * 5)
-
-
-## load("D:\\projects\\SGAT\\Movement_fit.Rdata")
-##fit <- list(x = fit$x[1:5, , ], z =  fit$z[1:4, , ], model = list(time =  fit$model$time[1:5]))
-##save(fit, file = "afile.Rdata")
-load("afile.Rdata")
-
-
-Pimage(fit)
-
-
-
-##.checkforsense <- function(x) {
- ##   tm <- .times(x)
-    ## not fatal, since this is handy for multiple track-chains
-##    if(!all(diff(unclass(tm)) > 0)) warning("input time stamps are not monotonically increasing, i.e. they contain duplicates and/or are out of temporal order")
-##    invisible(NULL)#
-##}
 
 
 .process_proj <- function(x, ext) {
@@ -509,7 +496,7 @@ Pimage(fit)
 cut.Pimage <- function(x, breaks, ...) {
 
   r1 <- x[1]
-    datetimes <- .times(x)
+    datetimes <- .Xtimes(x)
 
     ct <- cut.POSIXt(datetimes, breaks = breaks,  ...)
     ## now rebuild the output
@@ -535,9 +522,9 @@ print.Pimage <- function(x, ...) {
   ## this needs to know the x/y/time range, and possibly the sizes of all images, whether any are NULL or funny
     a <- x[1L]
     ext <- extent(a)
-    trange <- format(range(.times(x)))
-    Z <- .isZ(x)
-    cat("class   :", class(x), c("(Primary/X)", "(Intermediate/Z)")[Z + 1], "\nlength  :", length(x),  "\ntime    :", trange, "\n")
+    trange <- format(range(.Xtimes(x)))
+    type <- .type(x)
+    cat("class   :", class(x), type, "\nlength  :", length(x),  "\ntime    :", trange, "\n")
     ##cat("Time Steps   :")
     ##str(attr(x, "times"))
      e <- bbox(a)
@@ -612,4 +599,35 @@ cn.pimg <- function(x) {
     sort(rep(seq(tl, by = xbnd[3], length = ncol(x$image)), each = nrow(x$image)) +
          rep(seq_len(nrow(x$image)) - 1, ncol(x$image)))
 }
+
+rm("[.Pimage")
+rm("print.Pimage")
+
+library(raster)
+x <- Pimage(Sys.time() + 1:3)
+x[[3]]
+##x[[2]] <- "rabbit"
+
+xy <- cbind(rnorm(1000, 0, 1), rnorm(1000, 10, 1.5))
+
+## this is the internal mechanism for Pimage.default
+for (i in seq_len(length(x))) x[[i]] <- chain.bin(x[[i]], xy - 10 + i * 5)
+
+
+## load("D:\\projects\\SGAT\\Movement_fit.Rdata")
+##fit <- list(x = fit$x[1:5, , ], z =  fit$z[1:4, , ], model = list(time =  fit$model$time[1:5]))
+##save(fit, file = "afile.Rdata")
+load("afile.Rdata")
+
+
+Pimage(fit)
+
+
+
+##.checkforsense <- function(x) {
+ ##   tm <- .times(x)
+    ## not fatal, since this is handy for multiple track-chains
+##    if(!all(diff(unclass(tm)) > 0)) warning("input time stamps are not monotonically increasing, i.e. they contain duplicates and/or are out of temporal order")
+##    invisible(NULL)#
+##}
 
