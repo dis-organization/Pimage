@@ -33,6 +33,7 @@
 ##' @param type character, samples to bin, "primary" or "intermediate"
 ##' @param pimg
 ##' @param proj a character string of projection arguments, see Details
+##' @param ... arguments passed to methods, see \code{chain.bin}
 ##' @return \code{\link{Pimage}}
 #' @import raster sp
 ##' @export
@@ -101,14 +102,14 @@ Pimage.POSIXct <- function(x, grid = NULL, type = c("primary", "intermediate"), 
 #' @rdname Pimage
 #' @method Pimage POSIXct
 #' @S3method Pimage POSIXct
-
 Pimage.default <- function(x, type = c("primary", "intermediate"),
-                      pimg = NULL, grid = NULL, proj = NULL) {
+                      pimg = NULL, grid = NULL, proj = NULL, ...) {
     ## this better be a SGAT fit object
     tstT <- inherits(x$model$time, "POSIXct")
-    if (!tstT) stop("no times in fit object")
+
     tstX <- inherits(x$x, "array")
     tstZ <- inherits(x$z, "array")
+    if (!tstT | !tstX) stop("this does not appear to an SGAT fit object")
 
     modeltimes <- x$model$time
     type <- match.arg(type)
@@ -187,12 +188,13 @@ Pimage.default <- function(x, type = c("primary", "intermediate"),
 
   for (k in seq_along(pimg)) {
       binx <- t(chain[k, 1:2, ])
-      pimg[[k]] <- chain.bin(pimg[[k]], binx, weight = weights[k], previters =  attr(pimg, "itersbin"))
+      pimg[[k]] <- chain.bin(pimg[[k]], binx, weight = weights[k], previters =  attr(pimg, "itersbin"), ...)
 ##      pimg[[k]]
   }
     attr(pimg, "itersbin") <-  attr(pimg, "itersbin") + nrow(binx)
   pimg
 }
+
 
 .chaingrid <- function(x) {
   xrange <- range(x[,1,])
@@ -344,7 +346,7 @@ length.Pimage <- function(x, ...) {
 
   val <- as.image.Pimage(x)
   val$z[!val$z > 0] <- NA
-   raster(val, crs = .projection(x))
+   raster(val, crs = projection(x))
 
 }
 
@@ -396,9 +398,6 @@ as.POSIXct.Pimage <- function(x, ...) {
 
 
 
-.projection <- function(x) {
-    x$projection
-}
 
 ## workers used by as.image.Pimage and each other
 ## these are old, but they work on new Pimage
@@ -477,9 +476,7 @@ as.image.Pimage <-
 
 
 
-.projection <- function(x) {
-    attr(x, "projection")
-}
+
 
 ##' cut.Pimage
 ##'
@@ -501,14 +498,14 @@ cut.Pimage <- function(x, breaks, ...) {
     ct <- cut.POSIXt(datetimes, breaks = breaks,  ...)
     ## now rebuild the output
 
-    res <- array(0.0, c(dim(r1)[1:2], nlevels(ct)))
+    resarr <- array(0.0, c(dim(r1)[1:2], nlevels(ct)))
     for (i in seq_len(nlevels(ct))) {
           ## this is the solution to the as.matrix namespace problem (don't use it) MDSumner 2013-07-18
-          res[,,i] <- getValues(x[ct == levels(ct)[i]], format='matrix')
+          resarr[,,i] <- getValues(x[ct == levels(ct)[i]], format='matrix')
       }
 
-  res <- brick(res, xmn=xmin(r1), xmx=xmax(r1), ymn=ymin(r1), ymx=ymax(r1), crs=projection(r1))
-  setZ(res, as.POSIXct(levels(ct), tz = "GMT"), name = "datetime")
+  resr <- brick(resarr, xmn=xmin(r1), xmx=xmax(r1), ymn=ymin(r1), ymx=ymax(r1), crs=projection(r1))
+  setZ(resr, as.POSIXct(levels(ct), tz = "GMT"), name = "datetime")
 }
 
 
@@ -571,6 +568,9 @@ as.list.Pimage <- function(x, ...) {
     x$p
 }
 
+plot.Pimage <- function(x, ...) {
+    plot(x[], ...)
+}
 
 ## not required
 ##".times<-" <- function(x, value) {
@@ -600,13 +600,21 @@ cn.pimg <- function(x) {
          rep(seq_len(nrow(x$image)) - 1, ncol(x$image)))
 }
 
-rm("[.Pimage")
-rm("print.Pimage")
+##rm("[.Pimage")
+##rm("print.Pimage")
 
 library(raster)
+
+setOldClass("Pimage")
+setMethod("projection", "Pimage", function(x) {
+    class(x) <- NULL
+    x$projection
+}
+)
+
 x <- Pimage(Sys.time() + 1:3)
 x[[3]]
-##x[[2]] <- "rabbit"
+
 
 xy <- cbind(rnorm(1000, 0, 1), rnorm(1000, 10, 1.5))
 
@@ -620,14 +628,5 @@ for (i in seq_len(length(x))) x[[i]] <- chain.bin(x[[i]], xy - 10 + i * 5)
 load("afile.Rdata")
 
 
-Pimage(fit)
-
-
-
-##.checkforsense <- function(x) {
- ##   tm <- .times(x)
-    ## not fatal, since this is handy for multiple track-chains
-##    if(!all(diff(unclass(tm)) > 0)) warning("input time stamps are not monotonically increasing, i.e. they contain duplicates and/or are out of temporal order")
-##    invisible(NULL)#
-##}
+x <- Pimage(fit)
 
